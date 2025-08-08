@@ -1,7 +1,12 @@
+// allocationService.js
+
+// This import assumes you've created the memoize.js file in a 'utils' folder
+const memoize = require('../utils/memoize');
 const config = require('../config/config.json');
 
 const normalize = (value, cap) => (value / cap) * 100;
 
+// This scoring function is now used by the memoized wrapper.
 const calculateAgentScore = (agent) => {
     const { performanceScore, seniorityMonths, targetAchievedPercent, activeClients } = agent;
     const { weights, normalizationCaps } = config;
@@ -18,8 +23,10 @@ const calculateAgentScore = (agent) => {
     return weightedScore;
 };
 
+// We wrap the scoring function to enable caching
+const calculateAgentScoreMemoized = memoize(calculateAgentScore);
+
 const generateJustification = (agent, agentScore, averageScore) => {
-    // ... (This function is fine)
     if (agentScore > averageScore * 1.1) {
         return "Consistently high performance and long-term contribution, excelling in all key metrics.";
     }
@@ -48,24 +55,25 @@ exports.calculateAllocation = (siteKitty, salesAgents) => {
 
     const { minDiscount, maxDiscount } = config;
 
-    const agentScores = salesAgents.map(agent => ({
-        id: agent.id,
-        score: calculateAgentScore(agent),
-        originalAgent: agent
-    }));
-
-    const totalScore = agentScores.reduce((sum, agent) => sum + agent.score, 0);
+    // --- Single Pass: Calculate scores and total score simultaneously ---
+    const scoredAgents = [];
+    let totalScore = 0;
+    
+    for (const agent of salesAgents) {
+        const score = calculateAgentScoreMemoized(agent);
+        scoredAgents.push({ ...agent, score, originalAgent: agent });
+        totalScore += score;
+    }
 
     if (totalScore === 0) {
-        // Handling zero scores separately
+        // ... (Logic for zero scores is unchanged)
         const equalAllocation = siteKitty / salesAgents.length;
         const finalResult = salesAgents.map(agent => ({
             id: agent.id,
             assignedDiscount: parseFloat(equalAllocation.toFixed(2)),
             justification: "All agents have identical performance scores, resulting in an equal distribution."
         }));
-        
-        // Final rounding to ensure exact sum
+
         const finalTotal = finalResult.reduce((sum, a) => sum + a.assignedDiscount, 0);
         const totalDiff = siteKitty - finalTotal;
         if (Math.abs(totalDiff) > 0.01) {
@@ -76,60 +84,56 @@ exports.calculateAllocation = (siteKitty, salesAgents) => {
 
     const averageScore = totalScore / salesAgents.length;
 
-    // Pass 1: Proportional distribution with max-capping
-    let allocations = agentScores.map(agent => {
+    let allocations = [];
+    const uncappedAgents = [];
+    let allocatedSum = 0;
+    
+    // Pass 1: Proportional distribution and max-capping
+    for (const agent of scoredAgents) {
         const proportionalDiscount = (agent.score / totalScore) * siteKitty;
-        let assignedDiscount = proportionalDiscount;
-        let isCapped = false; // Using a new flag for clarity
+        let assignedDiscount = Math.min(proportionalDiscount, maxDiscount);
+        
+        const isCapped = assignedDiscount === maxDiscount;
 
-        if (assignedDiscount > maxDiscount) {
-            assignedDiscount = maxDiscount;
-            isCapped = true;
-        }
-
-        return {
+        const allocation = {
             id: agent.id,
-            proportionalDiscount,
             assignedDiscount,
-            isCapped,
             score: agent.score,
+            isCapped,
             justification: generateJustification(agent.originalAgent, agent.score, averageScore)
         };
-    });
+        allocations.push(allocation);
+        allocatedSum += assignedDiscount;
 
-    // Pass 2: Redistribution of surplus from max-capping
-    let currentTotal = allocations.reduce((sum, a) => sum + a.assignedDiscount, 0);
-    let remainingKitty = siteKitty - currentTotal;
-    
-    if (remainingKitty > 0.01) { // Only redistribute surplus
-        const uncappedAgents = allocations.filter(a => !a.isCapped);
-        const uncappedScoreSum = uncappedAgents.reduce((sum, a) => sum + a.score, 0);
-
-        if (uncappedScoreSum > 0) {
-            allocations.forEach(a => {
-                if (!a.isCapped) {
-                    a.assignedDiscount += (a.score / uncappedScoreSum) * remainingKitty;
-                }
-            });
+        if (!isCapped) {
+            uncappedAgents.push(allocation);
         }
     }
     
-    // Pass 3: Final adjustment for minimums and rounding
+    // Pass 2: Redistribution of remaining funds to uncapped agents
+    let remainingKitty = siteKitty - allocatedSum;
+    const uncappedScoreSum = uncappedAgents.reduce((sum, a) => sum + a.score, 0);
+
+    if (remainingKitty > 0 && uncappedScoreSum > 0) {
+        for (const agent of uncappedAgents) {
+            agent.assignedDiscount += (agent.score / uncappedScoreSum) * remainingKitty;
+        }
+    }
+    
+    // Pass 3: Applying minimums and final rounding
     let finalResult = allocations.map(({ id, assignedDiscount, justification }) => ({
         id,
-        assignedDiscount: assignedDiscount,
+        assignedDiscount,
         justification
     }));
     
-    // Check if the kitty is sufficient for all minimums
     if (siteKitty >= salesAgents.length * minDiscount) {
-        finalResult = finalResult.map(a => {
-            a.assignedDiscount = Math.max(a.assignedDiscount, minDiscount);
-            return a;
-        });
+        finalResult = finalResult.map(a => ({
+            ...a,
+            assignedDiscount: Math.max(a.assignedDiscount, minDiscount)
+        }));
     }
 
-    // Final rounding and sum adjustment
     finalResult = finalResult.map(a => ({
         ...a,
         assignedDiscount: parseFloat(Math.max(0, a.assignedDiscount).toFixed(2))
