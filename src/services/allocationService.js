@@ -43,75 +43,76 @@ exports.calculateAllocation = (siteKitty, salesAgents) => {
   }));
 
   const totalScore = agentScores.reduce((sum, agent) => sum + agent.score, 0);
-
-  // Handle the all-same scores case or zero total score
-  if (totalScore === 0) {
-    const equalAllocation = siteKitty / salesAgents.length;
-    let allocations = salesAgents.map((agent, index) => ({
-      id: agent.id,
-      assignedDiscount: parseFloat(equalAllocation.toFixed(2)),
-      justification: "All agents have identical performance scores, resulting in an equal distribution."
-    }));
-    
-    // Adjust first agent to account for rounding errors
-    const roundedTotal = allocations.reduce((sum, a) => sum + a.assignedDiscount, 0);
-    const diff = siteKitty - roundedTotal;
-    if (Math.abs(diff) > 0.01) {
-      allocations[0].assignedDiscount = parseFloat((allocations[0].assignedDiscount + diff).toFixed(2));
-    }
-    
-    return { allocations };
-  }
-
   const averageScore = totalScore / salesAgents.length;
   const { minDiscount, maxDiscount } = config;
 
-  let allocations = agentScores.map(agent => ({
-    id: agent.id,
-    score: agent.score,
-    assignedDiscount: (agent.score / totalScore) * siteKitty,
-    justification: generateJustification(agent.originalAgent, agent.score, averageScore)
-  }));
-  
-  const clampedAllocations = allocations.map(a => ({...a}));
-  let totalClampedAmount = 0;
-  
-  // First pass: clamp all agents and calculate the total clamped amount
-  clampedAllocations.forEach(a => {
-      if (a.assignedDiscount < minDiscount) {
-          a.assignedDiscount = minDiscount;
-      } else if (a.assignedDiscount > maxDiscount) {
-          a.assignedDiscount = maxDiscount;
-      }
-      totalClampedAmount += a.assignedDiscount;
-  });
+  let allocations = [];
+  let totalAssigned = 0;
+  let unclampedScoresSum = 0;
 
-  // Calculate the difference between the total clamped amount and the kitty
-  const diff = siteKitty - totalClampedAmount;
-  
-  if (Math.abs(diff) > 0.01) {
-      const redistributableAgents = clampedAllocations.filter(a => a.assignedDiscount > minDiscount && a.assignedDiscount < maxDiscount);
+  // If totalScore is 0, all scores are 0, so distribute equally.
+  if (totalScore === 0) {
+    const equalAllocation = siteKitty / salesAgents.length;
+    allocations = salesAgents.map(agent => ({
+      id: agent.id,
+      assignedDiscount: equalAllocation,
+      justification: "All agents have identical performance scores, resulting in an equal distribution."
+    }));
+  } else {
+    // First pass: Calculate proportional allocation and apply clamping
+    allocations = agentScores.map(agent => {
+      let assignedDiscount = (agent.score / totalScore) * siteKitty;
+      let isClamped = false;
+      let justification = generateJustification(agent.originalAgent, agent.score, averageScore);
+
+      if (assignedDiscount < minDiscount) {
+        assignedDiscount = minDiscount;
+        isClamped = true;
+      } else if (assignedDiscount > maxDiscount) {
+        assignedDiscount = maxDiscount;
+        isClamped = true;
+      }
+
+      return {
+        id: agent.id,
+        originalDiscount: (agent.score / totalScore) * siteKitty,
+        assignedDiscount,
+        isClamped,
+        score: agent.score,
+        justification
+      };
+    });
+
+    // Calculate total assigned and identify unclamped agents
+    const initialTotalAssigned = allocations.reduce((sum, a) => sum + a.assignedDiscount, 0);
+    const difference = siteKitty - initialTotalAssigned;
+
+    if (Math.abs(difference) > 0.01) {
+      const redistributableAgents = allocations.filter(a => !a.isClamped);
       const redistributableScore = redistributableAgents.reduce((sum, a) => sum + a.score, 0);
 
+      // Second pass: Redistribute the surplus or deficit proportionally among unclamped agents
       if (redistributableScore > 0) {
-          clampedAllocations.forEach(a => {
-              if (a.assignedDiscount > minDiscount && a.assignedDiscount < maxDiscount) {
-                  a.assignedDiscount += (a.score / redistributableScore) * diff;
-              }
-          });
+        allocations.forEach(a => {
+          if (!a.isClamped) {
+            a.assignedDiscount += (a.score / redistributableScore) * difference;
+          }
+        });
       }
+    }
   }
 
-  // Final rounding and formatting
-  const finalResult = clampedAllocations.map(({ id, assignedDiscount, justification }) => ({
+  // Final pass: Round and ensure the sum is exactly the kitty
+  const finalResult = allocations.map(({ id, assignedDiscount, justification }) => ({
     id,
-    assignedDiscount: parseFloat(assignedDiscount.toFixed(2)),
+    assignedDiscount: parseFloat(Math.max(0, assignedDiscount).toFixed(2)),
     justification
   }));
 
-  // Final check to ensure total sum is exactly siteKitty
   const finalTotal = finalResult.reduce((sum, a) => sum + a.assignedDiscount, 0);
   const totalDiff = siteKitty - finalTotal;
+
+  // Adjust the first agent to account for any final rounding difference
   if (Math.abs(totalDiff) > 0.01) {
     finalResult[0].assignedDiscount = parseFloat((finalResult[0].assignedDiscount + totalDiff).toFixed(2));
   }
