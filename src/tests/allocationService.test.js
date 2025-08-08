@@ -1,8 +1,13 @@
+// allocationService.test.js
+
 const { calculateAllocation } = require('../services/allocationService');
+const config = require('../config/config.json');
 
 describe('Smart Discount Allocation Engine Unit Tests', () => {
 
     // Test Case 1: Normal Case
+    // Verifies that the function correctly allocates discounts proportionally based on agent scores
+    // and that the total allocated amount is close to the siteKitty.
     test('should correctly allocate discount based on varied agent scores', () => {
         const input = {
             siteKitty: 10000,
@@ -14,24 +19,25 @@ describe('Smart Discount Allocation Engine Unit Tests', () => {
             ]
         };
         const result = calculateAllocation(input.siteKitty, input.salesAgents);
-        
+
         // Assertions for a few key agents to ensure proportional distribution
         const a3Allocation = result.allocations.find(a => a.id === "A3").assignedDiscount;
         const a4Allocation = result.allocations.find(a => a.id === "A4").assignedDiscount;
-        
+
         // Agent A3 has the highest scores across the board, so should get the most
         expect(a3Allocation).toBeGreaterThan(a4Allocation);
-        
+
         // Agent A4 has the lowest scores, so should get the least (or near-least)
         const a2Allocation = result.allocations.find(a => a.id === "A2").assignedDiscount;
         expect(a4Allocation).toBeLessThan(a2Allocation);
-        
+
         // Assert total allocation is within a small tolerance of siteKitty
         const totalAllocated = result.allocations.reduce((sum, a) => sum + a.assignedDiscount, 0);
         expect(totalAllocated).toBeCloseTo(10000, 2);
     });
 
-    // Test Case 2: All-Same Scores Case - Corrected to handle rounding
+    // Test Case 2: All-Same Scores Case
+    // Verifies that the kitty is distributed equally when all agents have identical performance scores.
     test('should allocate equally when all agents have identical scores', () => {
         const input = {
             siteKitty: 10000,
@@ -42,21 +48,19 @@ describe('Smart Discount Allocation Engine Unit Tests', () => {
             ]
         };
         const result = calculateAllocation(input.siteKitty, input.salesAgents);
-        
-        // The expected values should be rounded to 2 decimal places.
-        // The total is 10000, and 10000 / 3 = 3333.333...
-        // The final amounts will be 3333.34, 3333.33, and 3333.33 to sum to 10000.
+
         const expectedAllocations = [3333.34, 3333.33, 3333.33];
-        
+
         result.allocations.forEach((a, index) => {
             expect(a.assignedDiscount).toBeCloseTo(expectedAllocations[index], 2);
         });
-        
+
         const totalAllocated = result.allocations.reduce((sum, a) => sum + a.assignedDiscount, 0);
         expect(totalAllocated).toBeCloseTo(10000, 2);
     });
 
     // Test Case 3: Rounding and Min/Max Thresholds
+    // Verifies that minimums are respected and the total kitty is still distributed.
     test('should correctly apply min/max thresholds and re-distribute funds', () => {
         const input = {
             siteKitty: 10000,
@@ -65,18 +69,15 @@ describe('Smart Discount Allocation Engine Unit Tests', () => {
                 { id: "A2", performanceScore: 50, seniorityMonths: 6, targetAchievedPercent: 50, activeClients: 5 }
             ]
         };
-        // The config.json has minDiscount: 500, maxDiscount: 5000.
-        // The initial proportional share for A2 would be less than 500.
-        // The engine should allocate A2 at least 500 and reduce A1's share.
-        
+
         const result = calculateAllocation(input.siteKitty, input.salesAgents);
-        
+
         const a1Allocation = result.allocations.find(a => a.id === "A1").assignedDiscount;
         const a2Allocation = result.allocations.find(a => a.id === "A2").assignedDiscount;
 
-        // Verify that A2 received at least the min discount. The logic will force it to be at least the min.
-        expect(a2Allocation).toBeGreaterThanOrEqual(500);
-        
+        // Verify that A2 received at least the min discount.
+        expect(a2Allocation).toBeGreaterThanOrEqual(config.minDiscount);
+
         // The total allocated amount should still be the site kitty.
         const totalAllocated = result.allocations.reduce((sum, a) => sum + a.assignedDiscount, 0);
         expect(totalAllocated).toBeCloseTo(10000, 2);

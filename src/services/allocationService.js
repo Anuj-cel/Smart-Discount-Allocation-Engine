@@ -3,119 +3,144 @@ const config = require('../config/config.json');
 const normalize = (value, cap) => (value / cap) * 100;
 
 const calculateAgentScore = (agent) => {
-  const { performanceScore, seniorityMonths, targetAchievedPercent, activeClients } = agent;
-  const { weights, normalizationCaps } = config;
+    const { performanceScore, seniorityMonths, targetAchievedPercent, activeClients } = agent;
+    const { weights, normalizationCaps } = config;
 
-  const normalizedSeniority = Math.min(seniorityMonths, normalizationCaps.seniorityMonths);
-  const normalizedClients = Math.min(activeClients, normalizationCaps.activeClients);
+    const normalizedSeniority = Math.min(seniorityMonths, normalizationCaps.seniorityMonths);
+    const normalizedClients = Math.min(activeClients, normalizationCaps.activeClients);
 
-  const weightedScore =
-    (performanceScore * weights.performanceScore) +
-    (normalize(normalizedSeniority, normalizationCaps.seniorityMonths) * weights.seniorityMonths) +
-    (targetAchievedPercent * weights.targetAchievedPercent) +
-    (normalize(normalizedClients, normalizationCaps.activeClients) * weights.activeClients);
+    const weightedScore =
+        (performanceScore * weights.performanceScore) +
+        (normalize(normalizedSeniority, normalizationCaps.seniorityMonths) * weights.seniorityMonths) +
+        (targetAchievedPercent * weights.targetAchievedPercent) +
+        (normalize(normalizedClients, normalizationCaps.activeClients) * weights.activeClients);
 
-  return weightedScore;
+    return weightedScore;
 };
 
 const generateJustification = (agent, agentScore, averageScore) => {
-  if (agentScore > averageScore * 1.1) {
-    return "Consistently high performance and long-term contribution, excelling in all key metrics.";
-  }
-  if (agentScore > averageScore * 0.9) {
-    return "Above average performance with consistent contribution across key metrics.";
-  }
-  if (agentScore < averageScore * 0.7) {
-    return "Performance below the group average, with a focus on improving key metrics.";
-  }
-  return "Moderate performance with potential for growth.";
+    // ... (This function is fine)
+    if (agentScore > averageScore * 1.1) {
+        return "Consistently high performance and long-term contribution, excelling in all key metrics.";
+    }
+    if (agentScore > averageScore * 0.9) {
+        return "Above average performance with consistent contribution across key metrics.";
+    }
+    if (agentScore < averageScore * 0.7) {
+        return "Performance below the group average, with a focus on improving key metrics.";
+    }
+    return "Moderate performance with potential for growth.";
 };
 
 exports.calculateAllocation = (siteKitty, salesAgents) => {
-  if (!salesAgents || salesAgents.length === 0) {
-    return { allocations: [] };
-  }
+    if (!salesAgents || salesAgents.length === 0) {
+        return { allocations: [] };
+    }
+    if (siteKitty <= 0) {
+        return {
+            allocations: salesAgents.map(agent => ({
+                id: agent.id,
+                assignedDiscount: 0,
+                justification: "No kitty available for allocation."
+            }))
+        };
+    }
 
-  const agentScores = salesAgents.map(agent => ({
-    id: agent.id,
-    score: calculateAgentScore(agent),
-    originalAgent: agent
-  }));
+    const { minDiscount, maxDiscount } = config;
 
-  const totalScore = agentScores.reduce((sum, agent) => sum + agent.score, 0);
-  const averageScore = totalScore / salesAgents.length;
-  const { minDiscount, maxDiscount } = config;
-
-  let allocations = [];
-  let totalAssigned = 0;
-  let unclampedScoresSum = 0;
-
-  // If totalScore is 0, all scores are 0, so distribute equally.
-  if (totalScore === 0) {
-    const equalAllocation = siteKitty / salesAgents.length;
-    allocations = salesAgents.map(agent => ({
-      id: agent.id,
-      assignedDiscount: equalAllocation,
-      justification: "All agents have identical performance scores, resulting in an equal distribution."
-    }));
-  } else {
-    // First pass: Calculate proportional allocation and apply clamping
-    allocations = agentScores.map(agent => {
-      let assignedDiscount = (agent.score / totalScore) * siteKitty;
-      let isClamped = false;
-      let justification = generateJustification(agent.originalAgent, agent.score, averageScore);
-
-      if (assignedDiscount < minDiscount) {
-        assignedDiscount = minDiscount;
-        isClamped = true;
-      } else if (assignedDiscount > maxDiscount) {
-        assignedDiscount = maxDiscount;
-        isClamped = true;
-      }
-
-      return {
+    const agentScores = salesAgents.map(agent => ({
         id: agent.id,
-        originalDiscount: (agent.score / totalScore) * siteKitty,
-        assignedDiscount,
-        isClamped,
-        score: agent.score,
-        justification
-      };
+        score: calculateAgentScore(agent),
+        originalAgent: agent
+    }));
+
+    const totalScore = agentScores.reduce((sum, agent) => sum + agent.score, 0);
+
+    if (totalScore === 0) {
+        // Handling zero scores separately
+        const equalAllocation = siteKitty / salesAgents.length;
+        const finalResult = salesAgents.map(agent => ({
+            id: agent.id,
+            assignedDiscount: parseFloat(equalAllocation.toFixed(2)),
+            justification: "All agents have identical performance scores, resulting in an equal distribution."
+        }));
+        
+        // Final rounding to ensure exact sum
+        const finalTotal = finalResult.reduce((sum, a) => sum + a.assignedDiscount, 0);
+        const totalDiff = siteKitty - finalTotal;
+        if (Math.abs(totalDiff) > 0.01) {
+            finalResult[0].assignedDiscount = parseFloat((finalResult[0].assignedDiscount + totalDiff).toFixed(2));
+        }
+        return { allocations: finalResult };
+    }
+
+    const averageScore = totalScore / salesAgents.length;
+
+    // Pass 1: Proportional distribution with max-capping
+    let allocations = agentScores.map(agent => {
+        const proportionalDiscount = (agent.score / totalScore) * siteKitty;
+        let assignedDiscount = proportionalDiscount;
+        let isCapped = false; // Using a new flag for clarity
+
+        if (assignedDiscount > maxDiscount) {
+            assignedDiscount = maxDiscount;
+            isCapped = true;
+        }
+
+        return {
+            id: agent.id,
+            proportionalDiscount,
+            assignedDiscount,
+            isCapped,
+            score: agent.score,
+            justification: generateJustification(agent.originalAgent, agent.score, averageScore)
+        };
     });
 
-    // Calculate total assigned and identify unclamped agents
-    const initialTotalAssigned = allocations.reduce((sum, a) => sum + a.assignedDiscount, 0);
-    const difference = siteKitty - initialTotalAssigned;
+    // Pass 2: Redistribution of surplus from max-capping
+    let currentTotal = allocations.reduce((sum, a) => sum + a.assignedDiscount, 0);
+    let remainingKitty = siteKitty - currentTotal;
+    
+    if (remainingKitty > 0.01) { // Only redistribute surplus
+        const uncappedAgents = allocations.filter(a => !a.isCapped);
+        const uncappedScoreSum = uncappedAgents.reduce((sum, a) => sum + a.score, 0);
 
-    if (Math.abs(difference) > 0.01) {
-      const redistributableAgents = allocations.filter(a => !a.isClamped);
-      const redistributableScore = redistributableAgents.reduce((sum, a) => sum + a.score, 0);
-
-      // Second pass: Redistribute the surplus or deficit proportionally among unclamped agents
-      if (redistributableScore > 0) {
-        allocations.forEach(a => {
-          if (!a.isClamped) {
-            a.assignedDiscount += (a.score / redistributableScore) * difference;
-          }
-        });
-      }
+        if (uncappedScoreSum > 0) {
+            allocations.forEach(a => {
+                if (!a.isCapped) {
+                    a.assignedDiscount += (a.score / uncappedScoreSum) * remainingKitty;
+                }
+            });
+        }
     }
-  }
+    
+    // Pass 3: Final adjustment for minimums and rounding
+    let finalResult = allocations.map(({ id, assignedDiscount, justification }) => ({
+        id,
+        assignedDiscount: assignedDiscount,
+        justification
+    }));
+    
+    // Check if the kitty is sufficient for all minimums
+    if (siteKitty >= salesAgents.length * minDiscount) {
+        finalResult = finalResult.map(a => {
+            a.assignedDiscount = Math.max(a.assignedDiscount, minDiscount);
+            return a;
+        });
+    }
 
-  // Final pass: Round and ensure the sum is exactly the kitty
-  const finalResult = allocations.map(({ id, assignedDiscount, justification }) => ({
-    id,
-    assignedDiscount: parseFloat(Math.max(0, assignedDiscount).toFixed(2)),
-    justification
-  }));
+    // Final rounding and sum adjustment
+    finalResult = finalResult.map(a => ({
+        ...a,
+        assignedDiscount: parseFloat(Math.max(0, a.assignedDiscount).toFixed(2))
+    }));
+    
+    const finalTotal = finalResult.reduce((sum, a) => sum + a.assignedDiscount, 0);
+    const totalDiff = siteKitty - finalTotal;
 
-  const finalTotal = finalResult.reduce((sum, a) => sum + a.assignedDiscount, 0);
-  const totalDiff = siteKitty - finalTotal;
+    if (Math.abs(totalDiff) > 0.01) {
+        finalResult[0].assignedDiscount = parseFloat((finalResult[0].assignedDiscount + totalDiff).toFixed(2));
+    }
 
-  // Adjust the first agent to account for any final rounding difference
-  if (Math.abs(totalDiff) > 0.01) {
-    finalResult[0].assignedDiscount = parseFloat((finalResult[0].assignedDiscount + totalDiff).toFixed(2));
-  }
-  
-  return { allocations: finalResult };
+    return { allocations: finalResult };
 };
