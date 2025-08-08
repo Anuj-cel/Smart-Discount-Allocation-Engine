@@ -6,7 +6,6 @@ const config = require('../config/config.json');
 
 const normalize = (value, cap) => (value / cap) * 100;
 
-// This scoring function is now used by the memoized wrapper.
 const calculateAgentScore = (agent) => {
     const { performanceScore, seniorityMonths, targetAchievedPercent, activeClients } = agent;
     const { weights, normalizationCaps } = config;
@@ -23,7 +22,6 @@ const calculateAgentScore = (agent) => {
     return weightedScore;
 };
 
-// We wrap the scoring function to enable caching
 const calculateAgentScoreMemoized = memoize(calculateAgentScore);
 
 const generateJustification = (agent, agentScore, averageScore) => {
@@ -53,7 +51,9 @@ exports.calculateAllocation = (siteKitty, salesAgents) => {
         };
     }
 
-    const { minDiscount, maxDiscount } = config;
+    // --- CHANGE: Calculate min/max discounts based on percentages of the siteKitty ---
+    const minDiscount = siteKitty * config.minDiscountPercent;
+    const maxDiscount = siteKitty * config.maxDiscountPercent;
 
     // --- Single Pass: Calculate scores and total score simultaneously ---
     const scoredAgents = [];
@@ -66,7 +66,6 @@ exports.calculateAllocation = (siteKitty, salesAgents) => {
     }
 
     if (totalScore === 0) {
-        // ... (Logic for zero scores is unchanged)
         const equalAllocation = siteKitty / salesAgents.length;
         const finalResult = salesAgents.map(agent => ({
             id: agent.id,

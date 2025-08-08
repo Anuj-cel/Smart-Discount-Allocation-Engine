@@ -9,6 +9,6 @@
     "seniorityMonths": 240,
     "activeClients": 50
   },
-  "minDiscount": 1000,
-  "maxDiscount": 7000
+  "minDiscountPercent": 0.1,
+  "maxDiscountPercent": 0.6
 }
