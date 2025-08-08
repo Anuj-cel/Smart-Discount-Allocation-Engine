@@ -1,6 +1,4 @@
-// allocationService.js
 
-// This import assumes you've created the memoize.js file in a 'utils' folder
 const memoize = require('../utils/memoize');
 const config = require('../config/config.json');
 
@@ -51,11 +49,9 @@ exports.calculateAllocation = (siteKitty, salesAgents) => {
         };
     }
 
-    // --- CHANGE: Calculate min/max discounts based on percentages of the siteKitty ---
     const minDiscount = siteKitty * config.minDiscountPercent;
     const maxDiscount = siteKitty * config.maxDiscountPercent;
 
-    // --- Single Pass: Calculate scores and total score simultaneously ---
     const scoredAgents = [];
     let totalScore = 0;
     
@@ -87,7 +83,6 @@ exports.calculateAllocation = (siteKitty, salesAgents) => {
     const uncappedAgents = [];
     let allocatedSum = 0;
     
-    // Pass 1: Proportional distribution and max-capping
     for (const agent of scoredAgents) {
         const proportionalDiscount = (agent.score / totalScore) * siteKitty;
         let assignedDiscount = Math.min(proportionalDiscount, maxDiscount);
@@ -109,7 +104,6 @@ exports.calculateAllocation = (siteKitty, salesAgents) => {
         }
     }
     
-    // Pass 2: Redistribution of remaining funds to uncapped agents
     let remainingKitty = siteKitty - allocatedSum;
     const uncappedScoreSum = uncappedAgents.reduce((sum, a) => sum + a.score, 0);
 
@@ -119,7 +113,6 @@ exports.calculateAllocation = (siteKitty, salesAgents) => {
         }
     }
     
-    // Pass 3: Applying minimums and final rounding
     let finalResult = allocations.map(({ id, assignedDiscount, justification }) => ({
         id,
         assignedDiscount,

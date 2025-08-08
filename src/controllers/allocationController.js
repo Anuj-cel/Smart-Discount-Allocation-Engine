@@ -6,11 +6,9 @@ exports.postAllocation = (req, res) => {
     const { siteKitty, salesAgents } = req.body;
     const allocations = calculateAllocation(siteKitty, salesAgents);
 
-    // Calculate total allocated once to avoid redundant loops
     const totalAllocatedValue = allocations.allocations.reduce((sum, a) => sum + a.assignedDiscount, 0);
     let remainingKittyValue = siteKitty - totalAllocatedValue;
 
-    // Correct for tiny floating point errors to ensure remainingKitty is zero when it should be
     if (Math.abs(remainingKittyValue) < 0.01) {
       remainingKittyValue = 0;
     }
